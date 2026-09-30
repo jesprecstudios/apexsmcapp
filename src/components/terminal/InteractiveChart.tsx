@@ -143,12 +143,54 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
     const [quickBias, setQuickBias] = useState<QuickBiasResult | null>(null);
     const [liveCandles, setLiveCandles] = useState<OHLCData[]>([]);
 
+    // TradingView Signal interactive vertical fine-tune adjustment
+    const [tvSignalOffset, setTvSignalOffset] = useState<number>(0);
+    const [isDraggingSignal, setIsDraggingSignal] = useState(false);
+    const dragStartYRef = useRef<number>(0);
+    const initialOffsetRef = useRef<number>(0);
+    const [dimensions, setDimensions] = useState<{ width: number; height: number }>({ width: 800, height: 500 });
+
     const captureSupported = engineType === "lightweight";
+
+    // Track chart container dimensions via ResizeObserver
+    useEffect(() => {
+      const container = chartContainerRef.current;
+      if (!container) return;
+
+      const updateDims = () => {
+        setDimensions({
+          width: container.clientWidth || 800,
+          height: container.clientHeight || 500,
+        });
+      };
+
+      updateDims();
+      const observer = new ResizeObserver(() => updateDims());
+      observer.observe(container);
+
+      return () => observer.disconnect();
+    }, []);
+
+    // Stop dragging signal if mouse is released anywhere in window
+    useEffect(() => {
+      const handleGlobalMouseUp = () => {
+        if (isDraggingSignal) {
+          setIsDraggingSignal(false);
+        }
+      };
+      window.addEventListener("mouseup", handleGlobalMouseUp);
+      return () => window.removeEventListener("mouseup", handleGlobalMouseUp);
+    }, [isDraggingSignal]);
+
+    // Reset TradingView signal alignment offset when switching symbol/timeframe
+    useEffect(() => {
+      setTvSignalOffset(0);
+    }, [symbol, timeframe]);
 
     // Load live candles from server to guarantee 100% authentic SMC calculations
     useEffect(() => {
       let isMounted = true;
-      fetch(`/api/v1/market-data?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&count=70`)
+      fetch(`/api/v1/market-data?symbol=${encodeURIComponent(symbol)}&timeframe=${encodeURIComponent(timeframe)}&count=120`)
         .then((r) => r.json())
         .then((data) => {
           if (isMounted && data.success && Array.isArray(data.candles) && data.candles.length > 0) {
@@ -433,7 +475,21 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
       }
     };
 
+    const handleSignalDragStart = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      setIsDraggingSignal(true);
+      dragStartYRef.current = e.clientY;
+      initialOffsetRef.current = tvSignalOffset;
+    };
+
     const handleMouseMove = (e: React.MouseEvent<SVGSVGElement>) => {
+      if (isDraggingSignal) {
+        const delta = e.clientY - dragStartYRef.current;
+        setTvSignalOffset(initialOffsetRef.current + delta);
+        return;
+      }
+
       if (!isDrawing || !currentShape) return;
       const rect = drawingLayerRef.current?.getBoundingClientRect();
       if (!rect) return;
@@ -458,6 +514,11 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
     };
 
     const handleMouseUp = () => {
+      if (isDraggingSignal) {
+        setIsDraggingSignal(false);
+        return;
+      }
+
       if (isDrawing && currentShape) {
         setDrawings((prev) => [...prev, currentShape]);
         setCurrentShape(null);
@@ -475,38 +536,67 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
       (price: number): number | null => {
         if (!price || isNaN(price)) return null;
 
-        // 1. Try native adapter calculation
-        if (adapterRef.current?.priceToCoordinate) {
+        // 1. Try native adapter calculation on SMC Canvas (LightweightChartsAdapter)
+        if (engineType === "lightweight" && adapterRef.current?.priceToCoordinate) {
           const coord = adapterRef.current.priceToCoordinate(price);
           if (coord !== null && !isNaN(coord)) return coord;
         }
 
-        // 2. High-precision container ratio fallback
+        // 2. High-precision container ratio fallback calibrated for TradingView / embed
         const container = chartContainerRef.current;
         if (!container) return null;
-        const height = container.clientHeight || 500;
+        const totalHeight = dimensions.height || container.clientHeight || 500;
         const candles = liveCandles.length > 0 ? liveCandles : adapterRef.current?.getCandles?.() || [];
         if (candles.length === 0) return null;
 
         const max = Math.max(...candles.map((c) => c.high));
         const min = Math.min(...candles.map((c) => c.low));
-        if (max === min) return height / 2;
+        if (max === min) return totalHeight / 2;
 
+        if (engineType === "tradingview") {
+          // TradingView advanced widget and Deriv iframe layout calibration:
+          // Top header toolbar: 42px (Deriv) / 38px (Standard TV)
+          // Bottom time axis: 30px
+          // Volume histogram pane at bottom: ~18% of available chart space
+          const meta = getSymbolMeta(symbol);
+          const isDeriv = meta.category === "synthetic";
+          const headerHeight = isDeriv ? 42 : 38;
+          const timeAxisHeight = 30;
+          const chartPaneHeight = Math.max(100, totalHeight - headerHeight - timeAxisHeight);
+          const volumePaneHeight = chartPaneHeight * 0.18;
+
+          // Usable candlestick vertical space
+          const candleAreaTop = headerHeight + chartPaneHeight * 0.08; // 8% top margin
+          const candleAreaBottom = totalHeight - timeAxisHeight - volumePaneHeight - chartPaneHeight * 0.06; // 6% buffer above volume
+          const candleSpan = Math.max(50, candleAreaBottom - candleAreaTop);
+
+          // Calculate price ratio between min and max
+          const priceRatio = (price - min) / (max - min);
+          const baseCoord = candleAreaBottom - priceRatio * candleSpan;
+
+          // Apply interactive fine-tuning offset
+          const finalY = baseCoord + tvSignalOffset;
+          return Math.max(headerHeight + 6, Math.min(totalHeight - timeAxisHeight - 6, finalY));
+        }
+
+        // Standard Lightweight Charts ratio fallback
         const pad = (max - min) * 0.08;
         const paddedMax = max + pad;
         const paddedMin = min - pad;
 
         const ratio = (price - paddedMin) / (paddedMax - paddedMin);
-        const y = height * (1 - ratio);
-        return Math.max(10, Math.min(height - 10, y));
+        const y = totalHeight * (1 - ratio);
+        return Math.max(10, Math.min(totalHeight - 10, y));
       },
-      [liveCandles]
+      [engineType, liveCandles, symbol, tvSignalOffset, dimensions.height]
     );
 
     // Render AI-generated visual chart drawings: Trade Setup, S/R, Order Blocks, Trendlines
     const renderAIDrawings = () => {
       if (!analysis?.aiDrawings) return null;
       const { supportResistance, trendlines, orderBlocks, tradeSetup } = analysis.aiDrawings;
+      const rightMargin = engineType === "tradingview" ? 68 : 55;
+      const chartW = Math.max(200, dimensions.width - rightMargin);
 
       return (
         <g key="ai-generated-markups" className="ai-markups-layer">
@@ -531,7 +621,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <rect
                   x="20"
                   y={riskTop}
-                  width="calc(100% - 40px)"
+                  width={chartW - 20}
                   height={riskHeight}
                   fill="rgba(239, 68, 68, 0.12)"
                   stroke="rgba(239, 68, 68, 0.4)"
@@ -544,7 +634,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <rect
                   x="20"
                   y={rewardTop}
-                  width="calc(100% - 40px)"
+                  width={chartW - 20}
                   height={rewardHeight}
                   fill="rgba(16, 185, 129, 0.12)"
                   stroke="rgba(16, 185, 129, 0.4)"
@@ -557,7 +647,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <line
                   x1="0"
                   y1={yEntry}
-                  x2="100%"
+                  x2={chartW}
                   y2={yEntry}
                   stroke="#06B6D4"
                   strokeWidth="2"
@@ -565,38 +655,69 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <rect
                   x="24"
                   y={yEntry - 12}
-                  width="180"
-                  height="22"
+                  width="190"
+                  height="24"
                   rx="4"
                   fill="#083344"
                   stroke="#06B6D4"
                   strokeWidth="1"
-                />
+                  className="cursor-ns-resize"
+                  onMouseDown={handleSignalDragStart}
+                >
+                  <title>Click and drag vertically to align Signal with TradingView candles</title>
+                </rect>
                 <text
                   x="32"
-                  y={yEntry + 3}
+                  y={yEntry + 4}
                   fill="#06B6D4"
                   fontSize="11"
                   fontFamily="monospace"
                   fontWeight="bold"
+                  className="cursor-ns-resize select-none"
+                  onMouseDown={handleSignalDragStart}
                 >
-                  ENTRY: {tradeSetup.entry} ({tradeSetup.direction.toUpperCase()})
+                  ENTRY: {tradeSetup.entry} ({tradeSetup.direction.toUpperCase()}) ↕
                 </text>
+
+                {/* Right Price Tag (Aligns with price axis) */}
+                <g transform={`translate(${chartW - 65}, ${yEntry - 10})`}>
+                  <rect
+                    x="0"
+                    y="0"
+                    width="65"
+                    height="20"
+                    rx="3"
+                    fill="#083344"
+                    stroke="#06B6D4"
+                    strokeWidth="1.5"
+                  />
+                  <text
+                    x="32.5"
+                    y="14"
+                    fill="#06B6D4"
+                    fontSize="10"
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    {tradeSetup.entry}
+                  </text>
+                </g>
 
                 {/* Risk/Reward Ratio Pill */}
                 <rect
-                  x="215"
+                  x="222"
                   y={yEntry - 12}
                   width="95"
-                  height="22"
+                  height="24"
                   rx="4"
                   fill="#1E293B"
                   stroke="#64748B"
                   strokeWidth="1"
                 />
                 <text
-                  x="222"
-                  y={yEntry + 3}
+                  x="229"
+                  y={yEntry + 4}
                   fill="#F8FAFC"
                   fontSize="10"
                   fontFamily="monospace"
@@ -609,7 +730,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <line
                   x1="0"
                   y1={ySL}
-                  x2="100%"
+                  x2={chartW}
                   y2={ySL}
                   stroke="#EF4444"
                   strokeWidth="2"
@@ -618,29 +739,60 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <rect
                   x="24"
                   y={ySL - 11}
-                  width="140"
-                  height="20"
+                  width="155"
+                  height="22"
                   rx="4"
                   fill="#450A0A"
                   stroke="#EF4444"
                   strokeWidth="1"
-                />
+                  className="cursor-ns-resize"
+                  onMouseDown={handleSignalDragStart}
+                >
+                  <title>Click and drag vertically to align Signal with TradingView candles</title>
+                </rect>
                 <text
                   x="32"
-                  y={ySL + 3}
+                  y={ySL + 4}
                   fill="#F87171"
                   fontSize="10"
                   fontFamily="monospace"
                   fontWeight="bold"
+                  className="cursor-ns-resize select-none"
+                  onMouseDown={handleSignalDragStart}
                 >
-                  STOP LOSS: {tradeSetup.stopLoss}
+                  STOP LOSS: {tradeSetup.stopLoss} ↕
                 </text>
+
+                {/* Stop Loss Right Price Tag */}
+                <g transform={`translate(${chartW - 65}, ${ySL - 10})`}>
+                  <rect
+                    x="0"
+                    y="0"
+                    width="65"
+                    height="20"
+                    rx="3"
+                    fill="#450A0A"
+                    stroke="#EF4444"
+                    strokeWidth="1.5"
+                  />
+                  <text
+                    x="32.5"
+                    y="14"
+                    fill="#F87171"
+                    fontSize="10"
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    {tradeSetup.stopLoss}
+                  </text>
+                </g>
 
                 {/* Take Profit 1 Line (Emerald) */}
                 <line
                   x1="0"
                   y1={yTP1}
-                  x2="100%"
+                  x2={chartW}
                   y2={yTP1}
                   stroke="#10B981"
                   strokeWidth="2"
@@ -649,23 +801,54 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <rect
                   x="24"
                   y={yTP1 - 11}
-                  width="130"
-                  height="20"
+                  width="145"
+                  height="22"
                   rx="4"
                   fill="#064E3B"
                   stroke="#10B981"
                   strokeWidth="1"
-                />
+                  className="cursor-ns-resize"
+                  onMouseDown={handleSignalDragStart}
+                >
+                  <title>Click and drag vertically to align Signal with TradingView candles</title>
+                </rect>
                 <text
                   x="32"
-                  y={yTP1 + 3}
+                  y={yTP1 + 4}
                   fill="#34D399"
                   fontSize="10"
                   fontFamily="monospace"
                   fontWeight="bold"
+                  className="cursor-ns-resize select-none"
+                  onMouseDown={handleSignalDragStart}
                 >
-                  TP1: {tradeSetup.tp1}
+                  TP1: {tradeSetup.tp1} ↕
                 </text>
+
+                {/* TP1 Right Price Tag */}
+                <g transform={`translate(${chartW - 65}, ${yTP1 - 10})`}>
+                  <rect
+                    x="0"
+                    y="0"
+                    width="65"
+                    height="20"
+                    rx="3"
+                    fill="#064E3B"
+                    stroke="#10B981"
+                    strokeWidth="1.5"
+                  />
+                  <text
+                    x="32.5"
+                    y="14"
+                    fill="#34D399"
+                    fontSize="10"
+                    fontFamily="monospace"
+                    fontWeight="bold"
+                    textAnchor="middle"
+                  >
+                    {tradeSetup.tp1}
+                  </text>
+                </g>
 
                 {/* Take Profit 2 Line (if present) */}
                 {yTP2 !== null && (
@@ -673,7 +856,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                     <line
                       x1="0"
                       y1={yTP2}
-                      x2="100%"
+                      x2={chartW}
                       y2={yTP2}
                       stroke="#059669"
                       strokeWidth="1.5"
@@ -682,23 +865,50 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                     <rect
                       x="24"
                       y={yTP2 - 10}
-                      width="120"
-                      height="18"
+                      width="135"
+                      height="20"
                       rx="3"
                       fill="#064E3B"
                       stroke="#059669"
                       strokeWidth="1"
+                      className="cursor-ns-resize"
+                      onMouseDown={handleSignalDragStart}
                     />
                     <text
                       x="32"
-                      y={yTP2 + 3}
+                      y={yTP2 + 4}
                       fill="#6EE7B7"
-                      fontSize="9"
+                      fontSize="9.5"
                       fontFamily="monospace"
                       fontWeight="bold"
+                      className="cursor-ns-resize select-none"
+                      onMouseDown={handleSignalDragStart}
                     >
-                      TP2: {tradeSetup.tp2}
+                      TP2: {tradeSetup.tp2} ↕
                     </text>
+                    <g transform={`translate(${chartW - 65}, ${yTP2 - 10})`}>
+                      <rect
+                        x="0"
+                        y="0"
+                        width="65"
+                        height="20"
+                        rx="3"
+                        fill="#064E3B"
+                        stroke="#059669"
+                        strokeWidth="1.5"
+                      />
+                      <text
+                        x="32.5"
+                        y="14"
+                        fill="#6EE7B7"
+                        fontSize="10"
+                        fontFamily="monospace"
+                        fontWeight="bold"
+                        textAnchor="middle"
+                      >
+                        {tradeSetup.tp2}
+                      </text>
+                    </g>
                   </g>
                 )}
 
@@ -708,7 +918,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                     <line
                       x1="0"
                       y1={yTP3}
-                      x2="100%"
+                      x2={chartW}
                       y2={yTP3}
                       stroke="#047857"
                       strokeWidth="1.5"
@@ -717,23 +927,50 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                     <rect
                       x="24"
                       y={yTP3 - 10}
-                      width="120"
-                      height="18"
+                      width="135"
+                      height="20"
                       rx="3"
                       fill="#064E3B"
                       stroke="#047857"
                       strokeWidth="1"
+                      className="cursor-ns-resize"
+                      onMouseDown={handleSignalDragStart}
                     />
                     <text
                       x="32"
-                      y={yTP3 + 3}
+                      y={yTP3 + 4}
                       fill="#A7F3D0"
-                      fontSize="9"
+                      fontSize="9.5"
                       fontFamily="monospace"
                       fontWeight="bold"
+                      className="cursor-ns-resize select-none"
+                      onMouseDown={handleSignalDragStart}
                     >
-                      TP3: {tradeSetup.tp3}
+                      TP3: {tradeSetup.tp3} ↕
                     </text>
+                    <g transform={`translate(${chartW - 65}, ${yTP3 - 10})`}>
+                      <rect
+                        x="0"
+                        y="0"
+                        width="65"
+                        height="20"
+                        rx="3"
+                        fill="#064E3B"
+                        stroke="#047857"
+                        strokeWidth="1.5"
+                      />
+                      <text
+                        x="32.5"
+                        y="14"
+                        fill="#A7F3D0"
+                        fontSize="10"
+                        fontFamily="monospace"
+                        fontWeight="bold"
+                        textAnchor="middle"
+                      >
+                        {tradeSetup.tp3}
+                      </text>
+                    </g>
                   </g>
                 )}
               </g>
@@ -753,7 +990,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <line
                   x1="0"
                   y1={y}
-                  x2="100%"
+                  x2={chartW}
                   y2={y}
                   stroke={color}
                   strokeWidth="1.5"
@@ -761,7 +998,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                   opacity="0.85"
                 />
                 <rect
-                  x="calc(100% - 210px)"
+                  x={Math.max(20, chartW - 200)}
                   y={y - 10}
                   width="190"
                   height="18"
@@ -772,7 +1009,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                   opacity="0.9"
                 />
                 <text
-                  x="calc(100% - 200px)"
+                  x={Math.max(30, chartW - 190)}
                   y={y + 3}
                   fill={color}
                   fontSize="9.5"
@@ -802,7 +1039,7 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
                 <rect
                   x="10"
                   y={top}
-                  width="calc(100% - 20px)"
+                  width={chartW - 10}
                   height={h}
                   fill={fill}
                   stroke={color}
@@ -1286,68 +1523,100 @@ const InteractiveChart = forwardRef<InteractiveChartRef, InteractiveChartProps>(
               {aiOverlaysActive && renderAIDrawings()}
             </svg>
 
-            {/* AI Bias Badge */}
-            {quickBias && (
-              <div className="absolute bottom-3 right-4 z-10 pointer-events-none">
-                <div
-                  className={`backdrop-blur border px-3 py-1.5 rounded-lg text-[10px] font-mono shadow-md flex items-center space-x-1.5 ${
-                    quickBias.direction === "bullish"
-                      ? "bg-bullish/10 border-bullish/30 text-bullish"
-                      : quickBias.direction === "bearish"
-                        ? "bg-bearish/10 border-bearish/30 text-bearish"
-                        : "bg-surface/80 border-outline text-on-surface-variant"
-                  }`}
-                >
-                  {quickBias.direction === "bullish" ? (
-                    <TrendingUp className="w-3.5 h-3.5" />
-                  ) : quickBias.direction === "bearish" ? (
-                    <TrendingDown className="w-3.5 h-3.5" />
-                  ) : (
-                    <Minus className="w-3.5 h-3.5" />
-                  )}
-                  <span className="font-bold">AI Bias: {quickBias.label}</span>
-                </div>
-              </div>
-            )}
-
-            {/* Live Institutional Indicators & SMC Overlay Status */}
-            <div className="absolute bottom-3 left-4 z-10 flex flex-wrap items-center gap-2 pointer-events-none">
-              {/* Real-time Order Flow Badge */}
-              <div className="bg-surface/90 backdrop-blur border border-outline px-2.5 py-1 rounded text-[10px] font-mono text-on-surface flex items-center space-x-1.5 shadow-md">
-                <span className="w-2 h-2 rounded-full bg-bullish animate-pulse"></span>
-                <span className="font-bold text-primary">SMC ENGINE ACTIVE</span>
-                <span className="text-on-surface-variant">·</span>
-                <span className="text-on-surface-variant">{symbol} {timeframe}</span>
-              </div>
-
-              {/* Technical Indicator Badges when active */}
-              {indicatorsActive && (
-                <div className="hidden md:flex items-center space-x-1.5 text-[10px] font-mono">
-                  <span className="bg-primary/15 text-primary border border-primary/30 px-2 py-0.5 rounded font-semibold">
-                    EMA (20): BULLISH
-                  </span>
-                  <span className="bg-surface/80 text-on-surface-variant border border-outline px-2 py-0.5 rounded font-semibold">
-                    EMA (50): 1.0841
-                  </span>
-                </div>
-              )}
-
-              {/* SMC Overlay Status when active */}
-              {layersActive && (
-                <div className="hidden md:flex items-center space-x-1.5 text-[10px] font-mono">
-                  <span className="bg-bullish/15 text-bullish border border-bullish/30 px-2 py-0.5 rounded font-semibold flex items-center">
-                    <Zap className="w-3 h-3 mr-1" /> OB DEMAND: {smcOverlays.orderBlocks[0]?.low ?? "ACTIVE"}
-                  </span>
-                </div>
-              )}
-            </div>
-
             {/* Background Symbol Watermark */}
             <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-5">
               <span className="font-headline font-black text-9xl tracking-tighter">
                 {symbol.replace("/", "")}
               </span>
             </div>
+          </div>
+        </div>
+
+        {/* Dedicated Chart Status Bar (Outside the chart canvas - completely unblocks candles, volume, and time axis) */}
+        <div className="h-8 bg-surface-container/95 border-t border-outline-variant px-3 flex items-center justify-between text-[10px] font-mono text-on-surface-variant select-none z-20 shrink-0">
+          <div className="flex items-center space-x-2 overflow-x-auto custom-scrollbar py-0.5">
+            <div className="bg-surface/90 border border-outline px-2 py-0.5 rounded text-on-surface flex items-center space-x-1.5 shadow-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-bullish animate-pulse" />
+              <span className="font-bold text-primary">SMC ENGINE ACTIVE</span>
+              <span className="text-on-surface-variant">·</span>
+              <span className="text-on-surface-variant font-semibold">{symbol} {timeframe}</span>
+            </div>
+
+            {indicatorsActive && (
+              <div className="hidden sm:flex items-center space-x-1.5">
+                <span className="bg-primary/10 text-primary border border-primary/25 px-2 py-0.5 rounded font-semibold">
+                  EMA (20): BULLISH
+                </span>
+                <span className="bg-surface/80 text-on-surface-variant border border-outline px-2 py-0.5 rounded font-semibold">
+                  EMA (50): 1.0841
+                </span>
+              </div>
+            )}
+
+            {layersActive && (
+              <div className="hidden md:flex items-center space-x-1.5">
+                <span className="bg-bullish/10 text-bullish border border-bullish/25 px-2 py-0.5 rounded font-semibold flex items-center">
+                  <Zap className="w-3 h-3 mr-1" /> OB DEMAND: {smcOverlays.orderBlocks[0]?.low ?? "ACTIVE"}
+                </span>
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-2 shrink-0">
+            {engineType === "tradingview" && analysis?.aiDrawings?.tradeSetup && (
+              <div className="flex items-center space-x-1 bg-surface border border-outline rounded px-2 py-0.5 shadow-xs">
+                <span className="text-[9px] text-on-surface-variant font-bold uppercase tracking-wider">
+                  Signal TV Align:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setTvSignalOffset((prev) => prev - 5)}
+                  className="px-1.5 py-0.5 rounded hover:bg-surface-container text-on-surface cursor-pointer font-bold transition-colors"
+                  title="Nudge Signal overlay UP (or drag badges directly on chart)"
+                >
+                  ▲ Up
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setTvSignalOffset((prev) => prev + 5)}
+                  className="px-1.5 py-0.5 rounded hover:bg-surface-container text-on-surface cursor-pointer font-bold transition-colors"
+                  title="Nudge Signal overlay DOWN (or drag badges directly on chart)"
+                >
+                  ▼ Down
+                </button>
+                {tvSignalOffset !== 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setTvSignalOffset(0)}
+                    className="text-[9px] text-primary hover:underline px-1 cursor-pointer font-semibold transition-colors"
+                    title="Reset to default calibrated alignment"
+                  >
+                    Reset ({tvSignalOffset > 0 ? `+${tvSignalOffset}` : tvSignalOffset}px)
+                  </button>
+                )}
+              </div>
+            )}
+
+            {quickBias && (
+              <div
+                className={`px-2.5 py-0.5 rounded text-[10px] font-mono flex items-center space-x-1.5 border shadow-xs ${
+                  quickBias.direction === "bullish"
+                    ? "bg-bullish/10 border-bullish/30 text-bullish font-bold"
+                    : quickBias.direction === "bearish"
+                      ? "bg-bearish/10 border-bearish/30 text-bearish font-bold"
+                      : "bg-surface border-outline text-on-surface-variant"
+                }`}
+              >
+                {quickBias.direction === "bullish" ? (
+                  <TrendingUp className="w-3.5 h-3.5" />
+                ) : quickBias.direction === "bearish" ? (
+                  <TrendingDown className="w-3.5 h-3.5" />
+                ) : (
+                  <Minus className="w-3.5 h-3.5" />
+                )}
+                <span>AI Bias: {quickBias.label}</span>
+              </div>
+            )}
           </div>
         </div>
       </section>
