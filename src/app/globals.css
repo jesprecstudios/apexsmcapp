@@ -1,0 +1,123 @@
+@import "tailwindcss";
+
+@theme {
+  --color-canvas: #101216;
+  --color-surface: #1B1E26;
+  --color-surface-container: #151820;
+  --color-surface-container-high: #212631;
+  --color-surface-container-highest: #29303D;
+  --color-navy: #0E1A2F;
+  --color-primary: #2563EB;
+  --color-primary-hover: #1D4ED8;
+  --color-primary-light: #3B82F6;
+  --color-primary-container: rgba(37, 99, 235, 0.16);
+  --color-bearish: #E05C64;
+  --color-bearish-container: rgba(224, 92, 100, 0.15);
+  --color-bullish: #22C55E;
+  --color-bullish-container: rgba(34, 197, 94, 0.15);
+  --color-gold: #F59E0B;
+  --color-gold-container: rgba(245, 158, 11, 0.15);
+  --color-on-surface: #D7DEE9;
+  --color-on-surface-variant: #8492A6;
+  --color-outline: #262D3B;
+  --color-outline-variant: #1E232E;
+
+  --font-headline: var(--font-montserrat), sans-serif;
+  --font-body: var(--font-poppins), sans-serif;
+  --font-mono: var(--font-montserrat), var(--font-poppins), sans-serif;
+
+  --radius-sm: 0.25rem;
+  --radius-md: 0.375rem;
+  --radius-lg: 0.5rem;
+}
+
+:root {
+  --canvas: #101216;
+  --surface: #1B1E26;
+  --surface-container: #151820;
+  --surface-container-high: #212631;
+  --surface-container-highest: #29303D;
+  --navy: #0E1A2F;
+  --primary: #2563EB;
+  --primary-light: #3B82F6;
+  --primary-container: rgba(37, 99, 235, 0.16);
+  --bearish: #E05C64;
+  --bullish: #22C55E;
+  --gold: #F59E0B;
+  --on-surface: #D7DEE9;
+  --on-surface-variant: #8492A6;
+  --outline: #262D3B;
+  --outline-variant: #1E232E;
+
+  --font-headline: var(--font-montserrat), sans-serif;
+  --font-body: var(--font-poppins), sans-serif;
+  --font-mono: var(--font-montserrat), var(--font-poppins), sans-serif;
+}
+
+/* Strict Typography Enforcement: Montserrat & Poppins strictly, no Courier or generic defaults */
+body, button, input, select, textarea {
+  font-family: var(--font-body);
+}
+
+body {
+  background-color: var(--canvas);
+  color: var(--on-surface);
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, h2, h3, h4, h5, h6, .font-headline {
+  font-family: var(--font-headline) !important;
+}
+
+.font-body {
+  font-family: var(--font-body) !important;
+}
+
+/* Tabular display for numbers, badges, and readouts using Montserrat instead of Courier or monospace */
+.font-mono, [class*="font-mono"], code, pre, kbd {
+  font-family: var(--font-headline) !important;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* Institutional Chart Grid Background */
+.grid-chart-bg {
+  background-size: 40px 40px;
+  background-image: 
+    linear-gradient(to right, rgba(38, 45, 59, 0.35) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(38, 45, 59, 0.35) 1px, transparent 1px);
+}
+
+/* Sleek Micro-Scrollbar for Terminal, Modals & Historical Panels */
+.custom-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--outline) transparent;
+  -webkit-overflow-scrolling: touch;
+}
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: var(--outline);
+  border-radius: 4px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: var(--primary);
+}
+
+/* Luminous Electric Blue Glow Accents */
+.glow-primary {
+  box-shadow: 0 0 18px rgba(37, 99, 235, 0.45);
+}
+.glow-primary-sm {
+  box-shadow: 0 0 10px rgba(59, 130, 246, 0.4);
+}
+.glow-bearish-sm {
+  box-shadow: 0 0 10px rgba(224, 92, 100, 0.4);
+}
