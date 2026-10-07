@@ -358,7 +358,7 @@ export class LightweightChartsAdapter implements ChartAdapter {
         from: this.candles[0]?.time || "",
         to: lastCandle.time,
       },
-      ohlcSummary: this.candles.slice(-15),
+      ohlcSummary: this.candles.slice(-60),
       dataSource: this.dataSource,
       dataProvider: this.dataProvider,
       simulatedReason: this.simulatedReason,

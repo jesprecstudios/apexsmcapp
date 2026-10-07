@@ -151,7 +151,7 @@ function forexLikeSpec(): ContractSpec {
   return { standardLotValue: 100_000, lotStep: 0.01, decimals: 2 };
 }
 
-/** Convenience wrapper: attaches a plan to an analysis result. */
+/** Convenience wrapper: attaches a plan to an analysis result and all its scenarios. */
 export function withTradePlan(
   result: AnalysisResult,
   riskProfile: RiskProfile | undefined,
@@ -160,11 +160,19 @@ export function withTradePlan(
 ): AnalysisResult {
   if (!riskProfile || riskProfile.accountBalance <= 0) return result;
 
-  const scenario = result.scenarios[0];
-  if (!scenario) return result;
+  const scenariosWithPlans = result.scenarios.map((scenario) => {
+    const plan = buildTradePlan({ scenario, riskProfile, meta, currentPrice });
+    return {
+      ...scenario,
+      tradePlan: plan ?? undefined,
+    };
+  });
 
-  const plan = buildTradePlan({ scenario, riskProfile, meta, currentPrice });
-  if (!plan) return result;
+  const primaryPlan = scenariosWithPlans[0]?.tradePlan;
 
-  return { ...result, tradePlan: plan };
+  return {
+    ...result,
+    scenarios: scenariosWithPlans,
+    tradePlan: primaryPlan,
+  };
 }

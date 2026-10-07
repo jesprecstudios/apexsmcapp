@@ -35,6 +35,8 @@ interface AIAnalysisPanelProps {
   analysis: AnalysisResult | null;
   onRunInquiry?: (inquiry: string) => void;
   onRefresh?: () => void;
+  selectedScenarioIndex?: number;
+  onSelectScenario?: (index: number) => void;
 }
 
 // ─── Helpers to split a single analysis result across tabs ───────────────────
@@ -100,9 +102,20 @@ export default function AIAnalysisPanel({
   analysis,
   onRunInquiry,
   onRefresh,
+  selectedScenarioIndex,
+  onSelectScenario,
 }: AIAnalysisPanelProps) {
   const [inquiry, setInquiry] = useState("");
   const [copiedSignal, setCopiedSignal] = useState(false);
+  const [activeScenarioIdx, setActiveScenarioIdx] = useState(0);
+
+  const effectiveScenarioIdx =
+    selectedScenarioIndex !== undefined ? selectedScenarioIndex : activeScenarioIdx;
+
+  const handleSelectScenario = (idx: number) => {
+    setActiveScenarioIdx(idx);
+    onSelectScenario?.(idx);
+  };
 
   const strategies: Array<{ id: AnalysisStrategy; label: string; tooltip: string; icon: typeof Layers }> = [
     { id: "smc", label: "SMC", tooltip: "Smart Money Concepts & Order Flow", icon: Zap },
@@ -164,11 +177,80 @@ export default function AIAnalysisPanel({
   const isBullish = analysis?.bias === "bullish";
   const isBearish = analysis?.bias === "bearish";
 
-  const primaryScenario = analysis?.scenarios?.[0];
-  const tradePlan = analysis?.tradePlan;
-  const calculatedRR = tradePlan ? `1 : ${tradePlan.rr.toFixed(2)}` : "N/A";
+  const activeScenario =
+    analysis?.scenarios && analysis.scenarios.length > 0
+      ? analysis.scenarios[effectiveScenarioIdx] ?? analysis.scenarios[0]
+      : undefined;
+  const activeTradePlan = activeScenario?.tradePlan ?? analysis?.tradePlan;
+  const calculatedRR = activeTradePlan ? `1 : ${activeTradePlan.rr.toFixed(2)}` : "N/A";
 
   // ─── Shared sub-renderers ──────────────────────────────────────────────────
+
+  const renderScenarioSelector = () => {
+    if (!analysis?.scenarios || analysis.scenarios.length <= 1) return null;
+
+    return (
+      <div className="bg-surface-container border border-outline rounded-lg p-2 space-y-1.5">
+        <div className="flex items-center justify-between px-1">
+          <span className="font-headline text-[10px] font-bold uppercase tracking-wider text-on-surface-variant flex items-center gap-1">
+            <GitMerge className="w-3 h-3 text-primary" />
+            <span>Directional Trade Scenarios</span>
+          </span>
+          <span className="text-[9px] font-mono text-on-surface-variant">
+            Tap to switch setup &amp; chart
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-1.5">
+          {analysis.scenarios.map((sc, idx) => {
+            const isSelected = idx === effectiveScenarioIdx;
+            const isLong = sc.direction === "bullish";
+            const rr = sc.tradePlan?.rr ?? 2.5;
+
+            return (
+              <button
+                key={idx}
+                type="button"
+                onClick={() => handleSelectScenario(idx)}
+                className={`py-2 px-2.5 rounded-lg border text-left transition-all cursor-pointer flex flex-col gap-0.5 ${
+                  isSelected
+                    ? isLong
+                      ? "bg-bullish/15 border-bullish text-bullish font-bold shadow-sm ring-1 ring-bullish/50"
+                      : "bg-bearish/15 border-bearish text-bearish font-bold shadow-sm ring-1 ring-bearish/50"
+                    : "bg-surface border-outline/70 text-on-surface-variant hover:text-on-surface hover:border-outline"
+                }`}
+              >
+                <div className="flex items-center justify-between w-full">
+                  <span className="font-headline text-xs font-black flex items-center gap-1 uppercase">
+                    {isLong ? (
+                      <ArrowUpRight className="w-3.5 h-3.5" />
+                    ) : (
+                      <ArrowDownRight className="w-3.5 h-3.5" />
+                    )}
+                    {isLong ? "BUY / LONG" : "SELL / SHORT"}
+                  </span>
+                  <span
+                    className={`font-mono text-[9px] px-1 py-0.2 rounded font-semibold uppercase ${
+                      isSelected
+                        ? isLong
+                          ? "bg-bullish/20 text-bullish"
+                          : "bg-bearish/20 text-bearish"
+                        : "bg-surface-container text-on-surface-variant"
+                    }`}
+                  >
+                    {idx === 0 ? "Primary" : "Alt Setup"}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-[10px] font-mono mt-0.5 opacity-90">
+                  <span>Entry: {sc.entryPrice}</span>
+                  <span>1:{rr.toFixed(1)} RR</span>
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  };
 
   const renderBiasHero = () => {
     if (!analysis) return null;
@@ -340,6 +422,7 @@ export default function AIAnalysisPanel({
     return (
       <>
         {renderBiasHero()}
+        {renderScenarioSelector()}
 
         {/* Executive Summary */}
         <div className="bg-surface-container border border-outline rounded-lg p-3 space-y-1">
@@ -434,22 +517,24 @@ export default function AIAnalysisPanel({
         {/* Invalidation / Target levels */}
         {renderKeyLevels(reversalItems.levels)}
 
-        {/* Primary Scenario (if available) */}
-        {primaryScenario && (
+        {renderScenarioSelector()}
+
+        {/* Active Scenario (if available) */}
+        {activeScenario && (
           <div className="bg-surface-container border border-outline rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="font-headline text-[11px] font-bold uppercase tracking-wider text-on-surface flex items-center space-x-1.5">
                 <TrendingUp className="w-3.5 h-3.5 text-primary" />
-                <span>{primaryScenario.name}</span>
+                <span>{activeScenario.name}</span>
               </span>
               <span
                 className={`font-mono text-[9px] uppercase px-1.5 py-0.5 rounded border ${
-                  primaryScenario.direction === "bullish"
+                  activeScenario.direction === "bullish"
                     ? "bg-primary/10 text-primary border-primary/30"
                     : "bg-bearish/10 text-bearish border-bearish/30"
                 }`}
               >
-                {primaryScenario.direction}
+                {activeScenario.direction}
               </span>
             </div>
             <div className="space-y-1.5 text-xs">
@@ -457,13 +542,13 @@ export default function AIAnalysisPanel({
                 <span className="text-[10px] font-medium text-on-surface-variant block uppercase">
                   Trigger Condition
                 </span>
-                <span className="text-on-surface text-xs font-body">{primaryScenario.trigger}</span>
+                <span className="text-on-surface text-xs font-body">{activeScenario.trigger}</span>
               </div>
               <div className="bg-surface p-2 rounded border border-outline/70">
                 <span className="text-[10px] font-medium text-on-surface-variant block uppercase">
                   Rationale
                 </span>
-                <span className="text-on-surface text-xs font-body">{primaryScenario.rationale}</span>
+                <span className="text-on-surface text-xs font-body">{activeScenario.rationale}</span>
               </div>
             </div>
           </div>
@@ -540,22 +625,24 @@ export default function AIAnalysisPanel({
         {/* All key levels */}
         {renderKeyLevels(analysis.keyLevels)}
 
-        {/* Trade Plan */}
-        {primaryScenario && (
+        {/* Trade Plan & Scenarios */}
+        {renderScenarioSelector()}
+
+        {activeScenario && (
           <div className="bg-surface-container border border-outline rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between">
               <span className="font-headline text-[11px] font-bold uppercase tracking-wider text-on-surface flex items-center space-x-1.5">
                 <TrendingUp className="w-3.5 h-3.5 text-primary" />
-                <span>{primaryScenario.name}</span>
+                <span>{activeScenario.name}</span>
               </span>
               <span
                 className={`font-mono text-[9px] uppercase px-1.5 py-0.5 rounded border ${
-                  primaryScenario.direction === "bullish"
+                  activeScenario.direction === "bullish"
                     ? "bg-primary/10 text-primary border-primary/30"
                     : "bg-bearish/10 text-bearish border-bearish/30"
                 }`}
               >
-                {primaryScenario.direction}
+                {activeScenario.direction}
               </span>
             </div>
 
@@ -565,7 +652,7 @@ export default function AIAnalysisPanel({
                   Trigger Condition
                 </span>
                 <span className="text-on-surface text-xs font-body">
-                  {primaryScenario.trigger}
+                  {activeScenario.trigger}
                 </span>
               </div>
 
@@ -574,13 +661,13 @@ export default function AIAnalysisPanel({
                   Technical Rationale
                 </span>
                 <span className="text-on-surface text-xs font-body">
-                  {primaryScenario.rationale}
+                  {activeScenario.rationale}
                 </span>
               </div>
             </div>
 
             {/* Trade Ticket */}
-            {tradePlan ? (
+            {activeTradePlan ? (
               <div className="bg-surface border border-outline rounded p-2.5 space-y-2">
                 <div className="flex items-center justify-between">
                   <span className="text-[10px] font-medium text-on-surface-variant uppercase">
@@ -588,67 +675,67 @@ export default function AIAnalysisPanel({
                   </span>
                   <span
                     className={`font-mono text-[9px] uppercase px-1.5 py-0.5 rounded border ${
-                      tradePlan.direction === "bullish"
+                      activeTradePlan.direction === "bullish"
                         ? "bg-primary/10 text-primary border-primary/30"
                         : "bg-bearish/10 text-bearish border-bearish/30"
                     }`}
                   >
-                    {tradePlan.direction} {tradePlan.orderType}
+                    {activeTradePlan.direction} {activeTradePlan.orderType}
                   </span>
                 </div>
 
                 <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 text-xs">
                   <div>
                     <dt className="text-[9px] uppercase text-on-surface-variant">
-                      {tradePlan.orderType === "market" ? "Entry" : "Entry / Limit"}
+                      {activeTradePlan.orderType === "market" ? "Entry" : "Entry / Limit"}
                     </dt>
                     <dd className="font-mono text-on-surface">
-                      {tradePlan.limitPrice != null && tradePlan.orderType !== "market"
-                        ? tradePlan.limitPrice
-                        : tradePlan.entryPrice}
+                      {activeTradePlan.limitPrice != null && activeTradePlan.orderType !== "market"
+                        ? activeTradePlan.limitPrice
+                        : activeTradePlan.entryPrice}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-[9px] uppercase text-on-surface-variant">Stop Loss</dt>
-                    <dd className="font-mono text-bearish">{tradePlan.stopLossPrice}</dd>
+                    <dd className="font-mono text-bearish">{activeTradePlan.stopLossPrice}</dd>
                   </div>
                   <div>
                     <dt className="text-[9px] uppercase text-on-surface-variant">Stop</dt>
                     <dd className="font-mono text-on-surface">
-                      {tradePlan.stopDistancePips.toFixed(1)} pips
+                      {activeTradePlan.stopDistancePips.toFixed(1)} pips
                     </dd>
                   </div>
                   <div>
                     <dt className="text-[9px] uppercase text-on-surface-variant">R:R at TP1</dt>
                     <dd
                       className={`font-mono ${
-                        tradePlan.rr >= 2
+                        activeTradePlan.rr >= 2
                           ? "text-primary"
-                          : tradePlan.rr >= 1
+                          : activeTradePlan.rr >= 1
                             ? "text-on-surface"
                             : "text-bearish"
                       }`}
                     >
-                      1 : {tradePlan.rr.toFixed(2)}
+                      1 : {activeTradePlan.rr.toFixed(2)}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-[9px] uppercase text-on-surface-variant">Position Size</dt>
                     <dd className="font-mono text-on-surface font-semibold">
-                      {tradePlan.lots.toFixed(2)} lots
+                      {activeTradePlan.lots.toFixed(2)} lots
                     </dd>
                   </div>
                   <div>
                     <dt className="text-[9px] uppercase text-on-surface-variant">Risk</dt>
                     <dd className="font-mono text-on-surface">
-                      {tradePlan.riskAmount.toFixed(2)} ({tradePlan.riskPercent * 100}%)
+                      {activeTradePlan.riskAmount.toFixed(2)} ({activeTradePlan.riskPercent * 100}%)
                     </dd>
                   </div>
                 </dl>
 
-                {tradePlan.takeProfits.length > 0 && (
+                {activeTradePlan.takeProfits.length > 0 && (
                   <ul className="space-y-1 border-t border-outline/60 pt-2">
-                    {tradePlan.takeProfits.map((tp) => (
+                    {activeTradePlan.takeProfits.map((tp) => (
                       <li key={tp.label} className="flex items-baseline justify-between gap-2">
                         <span className="font-mono text-[11px] text-primary shrink-0">
                           {tp.label} {tp.price}
@@ -661,9 +748,9 @@ export default function AIAnalysisPanel({
                   </ul>
                 )}
 
-                {tradePlan.warnings.length > 0 && (
+                {activeTradePlan.warnings.length > 0 && (
                   <ul className="space-y-1 border-t border-outline/60 pt-2">
-                    {tradePlan.warnings.map((warning) => (
+                    {activeTradePlan.warnings.map((warning) => (
                       <li key={warning} className="text-[10px] text-on-surface-variant flex items-start gap-1">
                         <AlertTriangle className="w-3 h-3 shrink-0 mt-px text-warning" />
                         <span>{warning}</span>
@@ -672,14 +759,14 @@ export default function AIAnalysisPanel({
                   </ul>
                 )}
 
-                {tradePlan.sizingLadder.length > 0 && (
+                {activeTradePlan.sizingLadder.length > 0 && (
                   <div className="border-t border-outline/60 pt-2">
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-[9px] uppercase text-on-surface-variant">
                         Lot size by account size
                       </span>
                       <span className="text-[9px] text-on-surface-variant">
-                        at {(tradePlan.riskPercent * 100).toFixed(2)}% risk
+                        at {(activeTradePlan.riskPercent * 100).toFixed(2)}% risk
                       </span>
                     </div>
                     <table className="w-full text-[10px] font-mono">
@@ -691,8 +778,8 @@ export default function AIAnalysisPanel({
                         </tr>
                       </thead>
                       <tbody>
-                        {tradePlan.sizingLadder.map((row) => {
-                          const isYours = Math.abs(row.accountBalance - tradePlan.accountBalance) < 0.005;
+                        {activeTradePlan.sizingLadder.map((row) => {
+                          const isYours = Math.abs(row.accountBalance - activeTradePlan.accountBalance) < 0.005;
                           return (
                             <tr
                               key={row.accountBalance}
@@ -725,8 +812,8 @@ export default function AIAnalysisPanel({
                 )}
 
                 <p className="text-[9px] text-on-surface-variant/80 border-t border-outline/40 pt-1.5">
-                  Sized from your {tradePlan.accountBalance.toLocaleString()} balance at{" "}
-                  {(tradePlan.riskPercent * 100).toFixed(2)}% risk. Verify levels on your
+                  Sized from your {activeTradePlan.accountBalance.toLocaleString()} balance at{" "}
+                  {(activeTradePlan.riskPercent * 100).toFixed(2)}% risk. Verify levels on your
                   broker before placing an order.
                 </p>
               </div>
@@ -778,15 +865,13 @@ export default function AIAnalysisPanel({
   const renderSignalsContent = () => {
     if (!analysis) return null;
 
+    const currentScenario = activeScenario;
+    const currentTradePlan = activeTradePlan;
     const tradeSetup = analysis.aiDrawings?.tradeSetup;
-    const tradePlan = analysis.tradePlan;
-    const primaryScenario = analysis.scenarios?.[0];
 
     const isLong =
-      tradeSetup?.direction === "long" ||
-      tradePlan?.direction === "bullish" ||
-      primaryScenario?.direction === "bullish" ||
-      analysis.bias === "bullish";
+      currentScenario?.direction === "bullish" ||
+      (!currentScenario && (tradeSetup?.direction === "long" || currentTradePlan?.direction === "bullish" || analysis.bias === "bullish"));
 
     const directionLabel = isLong ? "BUY / LONG" : "SELL / SHORT";
     const directionBadge = isLong
@@ -794,42 +879,42 @@ export default function AIAnalysisPanel({
       : "bg-bearish/15 border-bearish/40 text-bearish";
 
     const entryPrice =
+      (currentTradePlan?.limitPrice != null && currentTradePlan?.orderType !== "market"
+        ? currentTradePlan.limitPrice
+        : currentTradePlan?.entryPrice) ??
+      currentScenario?.entryPrice ??
       tradeSetup?.entry ??
-      (tradePlan?.limitPrice != null && tradePlan?.orderType !== "market"
-        ? tradePlan.limitPrice
-        : tradePlan?.entryPrice) ??
-      primaryScenario?.entryPrice ??
       0;
 
     const stopLossPrice =
+      currentTradePlan?.stopLossPrice ??
+      currentScenario?.invalidationPrice ??
       tradeSetup?.stopLoss ??
-      tradePlan?.stopLossPrice ??
-      primaryScenario?.invalidationPrice ??
       0;
 
     const tp1 =
+      currentTradePlan?.takeProfits?.[0]?.price ??
+      currentScenario?.targetPrices?.[0] ??
       tradeSetup?.tp1 ??
-      tradePlan?.takeProfits?.[0]?.price ??
-      primaryScenario?.targetPrices?.[0] ??
       0;
 
     const tp2 =
+      currentTradePlan?.takeProfits?.[1]?.price ??
+      currentScenario?.targetPrices?.[1] ??
       tradeSetup?.tp2 ??
-      tradePlan?.takeProfits?.[1]?.price ??
-      primaryScenario?.targetPrices?.[1] ??
       null;
 
     const tp3 =
+      currentTradePlan?.takeProfits?.[2]?.price ??
+      currentScenario?.targetPrices?.[2] ??
       tradeSetup?.tp3 ??
-      tradePlan?.takeProfits?.[2]?.price ??
-      primaryScenario?.targetPrices?.[2] ??
       null;
 
-    const rrRatio = tradeSetup?.riskRewardRatio ?? tradePlan?.rr ?? 2.5;
+    const rrRatio = currentTradePlan?.rr ?? tradeSetup?.riskRewardRatio ?? 2.5;
     const stopDistance = Math.abs(entryPrice - stopLossPrice);
 
     const handleCopySignal = () => {
-      const text = `[ApexSMC Signal]\nAsset: ${symbol} (${timeframe})\nDirection: ${directionLabel}\nEntry: ${entryPrice}\nStop Loss: ${stopLossPrice}\nTake Profit 1: ${tp1}\n${tp2 ? `Take Profit 2: ${tp2}\n` : ""}${tp3 ? `Take Profit 3: ${tp3}\n` : ""}Risk/Reward: 1:${rrRatio.toFixed(2)}\nPosition Size: ${tradePlan?.lots?.toFixed(2) ?? "0.05"} lots`;
+      const text = `[ApexSMC Signal]\nAsset: ${symbol} (${timeframe})\nDirection: ${directionLabel}\nEntry: ${entryPrice}\nStop Loss: ${stopLossPrice}\nTake Profit 1: ${tp1}\n${tp2 ? `Take Profit 2: ${tp2}\n` : ""}${tp3 ? `Take Profit 3: ${tp3}\n` : ""}Risk/Reward: 1:${rrRatio.toFixed(2)}\nPosition Size: ${currentTradePlan?.lots?.toFixed(2) ?? "0.05"} lots`;
       if (typeof navigator !== "undefined" && navigator.clipboard) {
         navigator.clipboard.writeText(text);
         setCopiedSignal(true);
@@ -839,6 +924,8 @@ export default function AIAnalysisPanel({
 
     return (
       <div className="space-y-3.5">
+        {renderScenarioSelector()}
+
         {/* Signal Execution Hero Card */}
         <div className={`p-4 rounded-xl border relative overflow-hidden ${directionBadge}`}>
           <div className="flex items-center justify-between mb-2">
@@ -849,7 +936,7 @@ export default function AIAnalysisPanel({
               </span>
             </div>
             <span className="font-mono text-[10px] uppercase font-bold bg-surface/60 px-2 py-0.5 rounded border border-current">
-              {tradePlan?.orderType?.toUpperCase() || "LIMIT / PULLBACK"}
+              {currentTradePlan?.orderType?.toUpperCase() || "LIMIT / PULLBACK"}
             </span>
           </div>
 
@@ -896,7 +983,7 @@ export default function AIAnalysisPanel({
               {entryPrice !== 0 ? entryPrice : "At Market Trigger"}
             </div>
             <p className="text-[9px] text-on-surface-variant font-body mt-1">
-              {primaryScenario?.trigger || "Institutional Order Block / FVG zone entry"}
+              {currentScenario?.trigger || "Institutional Order Block / FVG zone entry"}
             </p>
           </div>
 
@@ -914,7 +1001,7 @@ export default function AIAnalysisPanel({
               {stopLossPrice !== 0 ? stopLossPrice : "Structural Low"}
             </div>
             <p className="text-[9px] text-on-surface-variant font-body mt-1">
-              Distance: {stopDistance > 0 ? `${stopDistance.toFixed(2)} pts` : "Standard buffer"}
+              Distance: {stopDistance > 0 ? `${stopDistance < 10 ? stopDistance.toFixed(5) : stopDistance.toFixed(2)} pts` : "Standard buffer"}
             </p>
           </div>
 
@@ -965,7 +1052,7 @@ export default function AIAnalysisPanel({
                 </div>
                 <div className="text-right">
                   <span className="font-bold text-sm text-on-surface font-mono">
-                    {tp2 ?? (entryPrice && stopDistance ? (isLong ? (entryPrice + stopDistance * 2.8).toFixed(2) : (entryPrice - stopDistance * 2.8).toFixed(2)) : "HTF Target")}
+                    {tp2 ?? (entryPrice && stopDistance ? (isLong ? (entryPrice + stopDistance * 2.8).toFixed(entryPrice < 10 ? 5 : 2) : (entryPrice - stopDistance * 2.8).toFixed(entryPrice < 10 ? 5 : 2)) : "HTF Target")}
                   </span>
                   <span className="text-[9px] text-bullish block font-mono">1 : 2.8 R:R</span>
                 </div>
@@ -986,7 +1073,7 @@ export default function AIAnalysisPanel({
                 </div>
                 <div className="text-right">
                   <span className="font-bold text-sm text-on-surface font-mono">
-                    {tp3 ?? (entryPrice && stopDistance ? (isLong ? (entryPrice + stopDistance * 4.2).toFixed(2) : (entryPrice - stopDistance * 4.2).toFixed(2)) : "Macro Target")}
+                    {tp3 ?? (entryPrice && stopDistance ? (isLong ? (entryPrice + stopDistance * 4.2).toFixed(entryPrice < 10 ? 5 : 2) : (entryPrice - stopDistance * 4.2).toFixed(entryPrice < 10 ? 5 : 2)) : "Macro Target")}
                   </span>
                   <span className="text-[9px] text-emerald-400 block font-mono">1 : 4.5+ R:R</span>
                 </div>
@@ -996,14 +1083,14 @@ export default function AIAnalysisPanel({
         </div>
 
         {/* Position Sizing & Risk Management Card */}
-        {tradePlan && (
+        {currentTradePlan && (
           <div className="bg-surface-container border border-outline rounded-lg p-3 space-y-2">
             <div className="flex items-center justify-between border-b border-outline/60 pb-1.5">
               <span className="font-headline text-[11px] font-bold uppercase tracking-wider text-on-surface">
                 Recommended Execution &amp; Sizing
               </span>
               <span className="font-mono text-[10px] text-primary font-bold">
-                {tradePlan.lots.toFixed(2)} Lots Sized
+                {currentTradePlan.lots.toFixed(2)} Lots Sized
               </span>
             </div>
             <div className="grid grid-cols-2 gap-2 text-xs font-mono">
@@ -1012,7 +1099,7 @@ export default function AIAnalysisPanel({
                   Account Balance
                 </span>
                 <span className="font-bold text-on-surface">
-                  ${tradePlan.accountBalance.toLocaleString()}
+                  ${currentTradePlan.accountBalance.toLocaleString()}
                 </span>
               </div>
               <div className="bg-surface p-2 rounded border border-outline/60">
@@ -1020,7 +1107,7 @@ export default function AIAnalysisPanel({
                   Risk Amount (SL)
                 </span>
                 <span className="font-bold text-bearish">
-                  ${tradePlan.riskAmount.toFixed(2)} ({(tradePlan.riskPercent * 100).toFixed(1)}%)
+                  ${currentTradePlan.riskAmount.toFixed(2)} ({(currentTradePlan.riskPercent * 100).toFixed(1)}%)
                 </span>
               </div>
             </div>

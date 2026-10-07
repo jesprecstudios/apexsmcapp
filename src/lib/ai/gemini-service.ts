@@ -125,18 +125,16 @@ ${payload.customPrompt ? `SPECIFIC USER INQUIRY / FOCUS:\n"${payload.customPromp
 ${buildRiskContext(payload.riskProfile)}
 
 MANDATORY EXECUTION RULES:
-- Provide EXACTLY 3 targets in targetPrices, in order of increasing reward. TP1 should be
-  the nearest meaningful liquidity pool or level, TP2 a further structural objective, TP3 a
-  major liquidity pool or measured move.
-- entryPrice MUST be a concrete number derived from structure you can see (order block edge,
-  FVG boundary, broken level, or retest level). Never answer "at market" with null if a
-  defensible level exists.
-- Use orderType "limit" when the setup calls for a resting pullback entry, "stop" for a
-  breakout entry, and "market" only when price is already at the trigger.
-- Invalidation must sit beyond the structure that would void the idea, not at an arbitrary
-  round number.
-- Do NOT compute lot size, risk amounts or margin. Those are calculated deterministically
-  from the trader's account settings. Report structure and levels only.
+- Provide TWO actionable scenarios in "scenarios" whenever market structure allows:
+  1) Scenario 1 ("Primary Execution Scenario"): The setup aligned with the dominant higher-timeframe order flow / structural bias.
+  2) Scenario 2 ("Alternative Execution Scenario"): The opposing directional setup (e.g., if Primary is Bearish Short, provide a Bullish Long setup from discount demand, key support, or sell-side liquidity sweep rebound; if Primary is Bullish Long, provide a Bearish Short setup from premium supply, key resistance, or buy-side liquidity sweep rejection).
+- For EACH scenario:
+  - "direction" MUST be "bullish" (for Buy / Long trade) or "bearish" (for Sell / Short trade).
+  - Provide EXACTLY 3 targets in targetPrices, in order of increasing reward. For longs, targets MUST sit above entry (TP1 < TP2 < TP3); for shorts, targets MUST sit below entry (TP1 > TP2 > TP3).
+  - entryPrice MUST be a concrete number derived from structure you can see (order block edge, FVG boundary, broken level, or retest level). Never answer "at market" with null if a defensible level exists.
+  - Invalidation must sit beyond the structure that would void the idea (below demand/support for bullish longs; above supply/resistance for bearish shorts), not at an arbitrary round number.
+  - Use orderType "limit" when the setup calls for a resting pullback entry, "stop" for a breakout entry, and "market" only when price is already at the trigger.
+  - Do NOT compute lot size, risk amounts or margin. Those are calculated deterministically from the trader's account settings. Report structure and levels only.
 
 STRATEGY DIRECTIVE & INSTRUCTIONS:
 ${strategy.promptText}
@@ -181,6 +179,18 @@ You MUST respond with a single, valid JSON object matching the following structu
       "targetPrices": [number array of exactly 3 targets in order of increasing reward],
       "targetRationale": ["what TP1 represents", "what TP2 represents", "what TP3 represents"],
       "rationale": "Why this risk-to-reward scenario is technically justified"
+    },
+    {
+      "name": "Alternative Execution Scenario",
+      "direction": "bullish" | "bearish",
+      "trigger": "Opposing price action trigger (e.g., Bullish reversal from Demand at 1.0780)",
+      "entryPrice": number,
+      "orderType": "market" | "limit" | "stop" | "none",
+      "limitPrice": number,
+      "invalidationPrice": number,
+      "targetPrices": [number array of exactly 3 targets],
+      "targetRationale": ["what TP1 represents", "what TP2 represents", "what TP3 represents"],
+      "rationale": "Why this opposing setup is technically justified"
     }
   ],
   "reasoning": [

@@ -248,7 +248,7 @@ export function generateCandleData(
   const meta = getSymbolMeta(symbol);
   const candles: OHLCData[] = [];
 
-  let currentPrice = meta.basePrice - meta.volatility * (count * 0.35);
+  let currentPrice = meta.basePrice;
   const now = new Date();
 
   // Time increment in minutes
@@ -304,12 +304,16 @@ export function generateCandleData(
       // Jump 75: Constant volatility with discrete price gap jumps
       const isJump = Math.random() < 0.1;
       const jumpDelta = isJump ? (Math.random() > 0.5 ? 1 : -1) * meta.volatility * 2.5 : 0;
-      change = (Math.random() - 0.48) * meta.volatility * 2.0 + jumpDelta;
+      const drift = (meta.basePrice - currentPrice) * 0.04;
+      change = (Math.random() - 0.5) * meta.volatility * 2.0 + jumpDelta + drift;
       highWickExtra = Math.random() * meta.volatility * 0.7;
       lowWickExtra = Math.random() * meta.volatility * 0.7;
     } else {
       // Standard continuous volatility (V75, V100, EUR/USD, Gold)
-      change = (Math.random() - 0.48) * meta.volatility * 2.0;
+      // Balanced mean-reverting oscillation around basePrice so price spans both
+      // Discount and Premium zones organically without permanent sell bias.
+      const drift = (meta.basePrice - currentPrice) * 0.04;
+      change = (Math.random() - 0.5) * meta.volatility * 2.0 + drift;
       highWickExtra = Math.random() * meta.volatility * 0.8;
       lowWickExtra = Math.random() * meta.volatility * 0.8;
     }
@@ -332,14 +336,6 @@ export function generateCandleData(
     currentPrice = close;
   }
 
-  // Pin last candle near current target base price for stability
-  const lastIndex = candles.length - 1;
-  if (lastIndex >= 0) {
-    candles[lastIndex].close = meta.basePrice;
-    candles[lastIndex].high = Math.max(candles[lastIndex].high, meta.basePrice);
-    candles[lastIndex].low = Math.min(candles[lastIndex].low, meta.basePrice);
-  }
-
   return candles;
 }
 
@@ -356,8 +352,8 @@ export function deriveSMCOverlays(candles: OHLCData[], symbol = "V75"): SMCOverl
       {
         id: "ob-bull-1",
         type: "BULLISH",
-        high: parseFloat((currentPrice - meta.volatility * 2.2).toFixed(meta.decimals)),
-        low: parseFloat((currentPrice - meta.volatility * 3.0).toFixed(meta.decimals)),
+        high: parseFloat((currentPrice - meta.volatility * 1.5).toFixed(meta.decimals)),
+        low: parseFloat((currentPrice - meta.volatility * 2.5).toFixed(meta.decimals)),
         startIndex: Math.max(0, candles.length - 25),
         endIndex: candles.length - 1,
         mitigated: false,
@@ -365,8 +361,8 @@ export function deriveSMCOverlays(candles: OHLCData[], symbol = "V75"): SMCOverl
       {
         id: "ob-bear-1",
         type: "BEARISH",
-        high: parseFloat((currentPrice + meta.volatility * 3.2).toFixed(meta.decimals)),
-        low: parseFloat((currentPrice + meta.volatility * 2.4).toFixed(meta.decimals)),
+        high: parseFloat((currentPrice + meta.volatility * 2.5).toFixed(meta.decimals)),
+        low: parseFloat((currentPrice + meta.volatility * 1.5).toFixed(meta.decimals)),
         startIndex: Math.max(0, candles.length - 35),
         endIndex: candles.length - 10,
         mitigated: false,
@@ -376,26 +372,46 @@ export function deriveSMCOverlays(candles: OHLCData[], symbol = "V75"): SMCOverl
       {
         id: "fvg-bull-1",
         type: "BULLISH",
-        high: parseFloat((currentPrice - meta.volatility * 1.1).toFixed(meta.decimals)),
-        low: parseFloat((currentPrice - meta.volatility * 1.8).toFixed(meta.decimals)),
+        high: parseFloat((currentPrice - meta.volatility * 0.8).toFixed(meta.decimals)),
+        low: parseFloat((currentPrice - meta.volatility * 1.4).toFixed(meta.decimals)),
         time: String(candles[candles.length - 12]?.time || ""),
+      },
+      {
+        id: "fvg-bear-1",
+        type: "BEARISH",
+        high: parseFloat((currentPrice + meta.volatility * 1.4).toFixed(meta.decimals)),
+        low: parseFloat((currentPrice + meta.volatility * 0.8).toFixed(meta.decimals)),
+        time: String(candles[candles.length - 18]?.time || ""),
       },
     ],
     breaksOfStructure: [
       {
         id: "bos-1",
-        price: parseFloat((currentPrice + meta.volatility * 2.4).toFixed(meta.decimals)),
+        price: parseFloat((currentPrice + meta.volatility * 2.0).toFixed(meta.decimals)),
         type: "BOS",
         direction: "BULLISH",
         time: String(candles[candles.length - 8]?.time || ""),
+      },
+      {
+        id: "bos-2",
+        price: parseFloat((currentPrice - meta.volatility * 2.0).toFixed(meta.decimals)),
+        type: "BOS",
+        direction: "BEARISH",
+        time: String(candles[candles.length - 14]?.time || ""),
       },
     ],
     liquiditySweeps: [
       {
         id: "liq-sweep-1",
-        price: parseFloat((currentPrice + meta.volatility * 3.5).toFixed(meta.decimals)),
+        price: parseFloat((currentPrice + meta.volatility * 3.0).toFixed(meta.decimals)),
         type: "BSL",
         time: String(candles[candles.length - 20]?.time || ""),
+      },
+      {
+        id: "liq-sweep-2",
+        price: parseFloat((currentPrice - meta.volatility * 3.0).toFixed(meta.decimals)),
+        type: "SSL",
+        time: String(candles[candles.length - 26]?.time || ""),
       },
     ],
   };

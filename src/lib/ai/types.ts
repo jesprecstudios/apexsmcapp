@@ -55,6 +55,7 @@ export interface TradeScenario {
   /** Plain-language meaning of each target, e.g. "TP1 - partial at 1R". */
   targetRationale: string[];
   rationale: string;
+  tradePlan?: TradePlan;
 }
 
 export interface ReasoningItem {

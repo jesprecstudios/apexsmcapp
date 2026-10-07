@@ -205,6 +205,16 @@ export function validateAndNormalizeAnalysis(
     }
   }
 
+  // Cross-field Consistency Rule 5b:
+  // Ensure the trader always has both Long and Short tactical options available.
+  // If the model only returned a single directional scenario, synthesize the opposing alternative setup.
+  if (data.scenarios.length === 1 && data.status !== "insufficient_data") {
+    const opposing = deriveOpposingScenario(data.scenarios[0], data.keyLevels);
+    if (opposing) {
+      data.scenarios.push(opposing);
+    }
+  }
+
   // Cross-field Consistency Rule 6:
   // Ensure aiDrawings is fully formed for direct chart rendering
   if (!data.aiDrawings) {
@@ -292,4 +302,83 @@ function deriveEntryFromLevels(
 
   const anyLevel = keyLevels.find((l) => l.price > 0);
   return anyLevel ? anyLevel.price : undefined;
+}
+
+/**
+ * Synthesizes an alternative opposing scenario if the model only provided one.
+ * Ensures the trader always has both Long and Short tactical options available.
+ */
+function deriveOpposingScenario(
+  primary: ValidatedAnalysis["scenarios"][0],
+  keyLevels: ValidatedAnalysis["keyLevels"]
+): ValidatedAnalysis["scenarios"][0] | null {
+  const isOpposingLong = primary.direction === "bearish";
+
+  // Find candidate levels for the opposing trade
+  const candidateLevels = keyLevels.filter((l) => l.price > 0);
+  if (candidateLevels.length === 0) return null;
+
+  const currentReference = primary.entryPrice ?? candidateLevels[0].price;
+
+  if (isOpposingLong) {
+    // Want a Long: entry at support or below current price
+    const supports = candidateLevels
+      .filter((l) => l.levelType === "support" || l.levelType === "order_block" || l.price < currentReference)
+      .sort((a, b) => b.price - a.price);
+
+    const entry = supports[0]?.price ?? Number((currentReference * 0.995).toFixed(5));
+    const invalidation = Number((entry * 0.992).toFixed(5));
+    const risk = entry - invalidation;
+    const tp1 = Number((entry + risk * 1.5).toFixed(5));
+    const tp2 = Number((entry + risk * 2.5).toFixed(5));
+    const tp3 = Number((entry + risk * 4.0).toFixed(5));
+
+    return {
+      name: "Alternative Bullish Rebound Setup",
+      direction: "bullish",
+      trigger: `Bullish displacement and reaction from discount support / demand near ${entry}`,
+      entryPrice: entry,
+      orderType: "limit",
+      limitPrice: entry,
+      invalidationPrice: invalidation,
+      targetPrices: [tp1, tp2, tp3],
+      targetRationale: [
+        "TP1 — 1.5R partial at range equilibrium",
+        "TP2 — 2.5R structural buy-side liquidity sweep",
+        "TP3 — 4.0R extended expansion target",
+      ],
+      rationale:
+        "Discount accumulation setup if sell-side liquidity is swept into support/demand.",
+    };
+  } else {
+    // Want a Short: entry at resistance or above current price
+    const resistances = candidateLevels
+      .filter((l) => l.levelType === "resistance" || l.levelType === "order_block" || l.price > currentReference)
+      .sort((a, b) => a.price - b.price);
+
+    const entry = resistances[0]?.price ?? Number((currentReference * 1.005).toFixed(5));
+    const invalidation = Number((entry * 1.008).toFixed(5));
+    const risk = invalidation - entry;
+    const tp1 = Number((entry - risk * 1.5).toFixed(5));
+    const tp2 = Number((entry - risk * 2.5).toFixed(5));
+    const tp3 = Number((entry - risk * 4.0).toFixed(5));
+
+    return {
+      name: "Alternative Bearish Rejection Setup",
+      direction: "bearish",
+      trigger: `Bearish rejection wick and order flow shift at premium supply near ${entry}`,
+      entryPrice: entry,
+      orderType: "limit",
+      limitPrice: entry,
+      invalidationPrice: invalidation,
+      targetPrices: [tp1, tp2, tp3],
+      targetRationale: [
+        "TP1 — 1.5R partial at range equilibrium",
+        "TP2 — 2.5R structural sell-side liquidity pool",
+        "TP3 — 4.0R extended downward expansion target",
+      ],
+      rationale:
+        "Premium supply rejection setup if price sweeps buy-side liquidity into resistance.",
+    };
+  }
 }

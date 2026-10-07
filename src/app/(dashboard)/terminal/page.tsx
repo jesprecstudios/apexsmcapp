@@ -31,6 +31,7 @@ export default function TerminalPage() {
   const [currentTimeframe, setCurrentTimeframe] = useState("H1");
   const [currentStrategy, setCurrentStrategy] = useState<AnalysisStrategy>("smc");
   const [currentAnalysis, setCurrentAnalysis] = useState<AnalysisResult | null>(null);
+  const [selectedScenarioIndex, setSelectedScenarioIndex] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   // Lot size cannot be derived without an account size, so the risk profile is
   // the only piece of state that makes the trade ticket appear.
@@ -165,6 +166,7 @@ export default function TerminalPage() {
 
       // 4. Update state with validated analysis
       setCurrentAnalysis(analysisData.data);
+      setSelectedScenarioIndex(0);
       setHistoryRefreshKey((prev) => prev + 1);
 
       // An upstream outage returns a valid "insufficient_data" body rather than
@@ -220,6 +222,7 @@ export default function TerminalPage() {
 
   const handleSelectHistoryAnalysis = (analysis: AnalysisResult) => {
     setCurrentAnalysis(analysis);
+    setSelectedScenarioIndex(0);
     setCurrentSymbol(analysis.symbol);
     setCurrentTimeframe(analysis.timeframe);
     // Switch to charts mode so the AI analysis panel (where the loaded
@@ -264,6 +267,39 @@ export default function TerminalPage() {
     window.addEventListener("mouseup", handleUp);
   };
 
+  const handleSelectScenario = (index: number) => {
+    setSelectedScenarioIndex(index);
+    if (!currentAnalysis || !currentAnalysis.scenarios?.[index]) return;
+    const sc = currentAnalysis.scenarios[index];
+    const isLong = sc.direction === "bullish";
+    const entry = sc.entryPrice ?? currentAnalysis.tradePlan?.entryPrice ?? 0;
+    const stopLoss = sc.invalidationPrice ?? currentAnalysis.tradePlan?.stopLossPrice ?? 0;
+    const tp1 = sc.targetPrices[0] ?? (isLong ? (entry ? entry * 1.01 : 0) : (entry ? entry * 0.99 : 0));
+    const newTradeSetup = {
+      direction: isLong ? ("long" as const) : ("short" as const),
+      entry,
+      stopLoss,
+      tp1,
+      tp2: sc.targetPrices[1],
+      tp3: sc.targetPrices[2],
+      riskRewardRatio: sc.tradePlan?.rr || 2.5,
+    };
+    setCurrentAnalysis((prev) => {
+      if (!prev) return null;
+      return {
+        ...prev,
+        tradePlan: sc.tradePlan || prev.tradePlan,
+        aiDrawings: {
+          supportResistance: prev.aiDrawings?.supportResistance || [],
+          trendlines: prev.aiDrawings?.trendlines || [],
+          orderBlocks: prev.aiDrawings?.orderBlocks || [],
+          ...prev.aiDrawings,
+          tradeSetup: newTradeSetup,
+        },
+      };
+    });
+  };
+
   // Determine whether to show a side panel or the default AI panel
   const showSidePanel = activeSideTab !== "charts";
 
@@ -298,6 +334,8 @@ export default function TerminalPage() {
             analysis={currentAnalysis}
             onRunInquiry={(inquiry) => handleSnapshotAnalyze(currentStrategy, inquiry)}
             onRefresh={() => handleSnapshotAnalyze(currentStrategy)}
+            selectedScenarioIndex={selectedScenarioIndex}
+            onSelectScenario={handleSelectScenario}
           />
         );
     }
